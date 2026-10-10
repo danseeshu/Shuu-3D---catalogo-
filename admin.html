@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0B1220">
+<title>Administrar catálogo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="hero">
+  <span class="eyebrow">Panel de administración</span>
+  <h1>Tu catálogo</h1>
+  <p>Agrega foto, nombre y precio. Cuando termines, presiona <b>Publicar</b> y tus clientes verán los cambios.</p>
+  <a class="link" href="index.html" target="_blank">Ver catálogo público ↗</a>
+</header>
+
+<main class="wrap">
+
+  <section class="panel">
+    <h2>Tu negocio</h2>
+    <p class="sub">Aquí configuras a qué WhatsApp te llegarán los pedidos.</p>
+    <div class="campos">
+      <div class="campo">
+        <label for="cNegocio">Nombre del negocio</label>
+        <input id="cNegocio" type="text" placeholder="Mi Taller 3D">
+      </div>
+      <div class="campo">
+        <label for="cWhatsapp">Tu WhatsApp (con código de país)</label>
+        <input id="cWhatsapp" type="tel" inputmode="numeric" placeholder="51987654321">
+        <div class="hint" id="waHint"></div>
+      </div>
+      <div class="campo">
+        <label for="cMoneda">Símbolo de moneda</label>
+        <input id="cMoneda" type="text" maxlength="4" placeholder="S/">
+      </div>
+      <div class="campo" style="grid-column:1/-1">
+        <label for="cBienvenida">Mensaje de bienvenida (opcional)</label>
+        <input id="cBienvenida" type="text" placeholder="Busca tus piezas favoritas, arma tu pedido y envíalo por WhatsApp.">
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>Productos <span class="cuenta" id="cuenta"></span></h2>
+      <div class="barra-acciones">
+        <button class="btn" id="btnNuevo" type="button">＋ Nuevo producto</button>
+        <label class="btn btn-sec">Subir varias fotos
+          <input type="file" id="fotosVarias" accept="image/*" multiple hidden>
+        </label>
+      </div>
+    </div>
+    <p class="sub">Toca el recuadro para poner la foto. «Subir varias fotos» crea un producto por cada foto: solo te queda escribir nombre y precio.</p>
+    <div class="grid-admin" id="lista"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Publicar</h2>
+    <p class="sub">Para que los cambios lleguen a tus clientes, esta página los guarda en tu repositorio de GitHub. Se hace una vez y queda recordado.</p>
+
+    <details class="gh" id="gh">
+      <summary>Conexión con GitHub</summary>
+      <div class="campos">
+        <div class="campo"><label for="ghOwner">Tu usuario de GitHub</label><input id="ghOwner" type="text" autocomplete="off"></div>
+        <div class="campo"><label for="ghRepo">Nombre del repositorio</label><input id="ghRepo" type="text" autocomplete="off"></div>
+        <div class="campo"><label for="ghBranch">Rama</label><input id="ghBranch" type="text" value="main" autocomplete="off"></div>
+        <div class="campo"><label for="ghToken">Token de acceso</label><input id="ghToken" type="password" autocomplete="off" placeholder="github_pat_…"></div>
+      </div>
+      <label class="check"><input type="checkbox" id="ghRecordar" checked> Recordar en este dispositivo</label>
+    </details>
+
+    <div class="barra-acciones">
+      <button class="btn" id="btnPublicar" type="button">Publicar cambios</button>
+      <button class="btn btn-sec" id="btnDescargar" type="button">Descargar catalogo.json</button>
+      <button class="btn btn-peligro" id="btnRecargar" type="button">Cargar lo ya publicado</button>
+    </div>
+    <div class="mensaje" id="msg" role="status"></div>
+  </section>
+</main>
+
+<div class="barra-fija">
+  <div class="estado" id="estado"><i></i><span>Todo publicado</span></div>
+  <button class="btn" id="btnPublicar2" type="button">Publicar</button>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const uid = () => "p" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+
+const LS_DRAFT = "cat3d_borrador";
+const LS_GH = "cat3d_github";
+
+let state = {
+  config: { negocio: "Mi Taller 3D", bienvenida: "", whatsapp: "", moneda: "S/" },
+  productos: []
+};
+let sucio = false;
+
+/* ---------- almacenamiento local (borrador) ---------- */
+function guardarBorrador(){
+  try{
+    localStorage.setItem(LS_DRAFT, JSON.stringify({ state, sucio }));
+  }catch(e){
+    mostrar("No se pudo guardar el borrador en este navegador (demasiadas fotos). Publica pronto para no perder cambios.", "info");
+  }
+}
+function leerBorrador(){
+  try{
+    const raw = localStorage.getItem(LS_DRAFT);
+    return raw ? JSON.parse(raw) : null;
+  }catch(e){ return null; }
+}
+function cambio(){
+  sucio = true;
+  guardarBorrador();
+  pintarEstado();
+}
+function pintarEstado(){
+  const el = $("#estado");
+  el.classList.toggle("sucio", sucio);
+  el.querySelector("span").textContent = sucio ? "Cambios sin publicar" : "Todo publicado";
+  const n = state.productos.length;
+  $("#cuenta").textContent = n ? `${n} en total` : "";
+}
+
+function normalizar(d){
+  const c = (d && d.config) || {};
+  return {
+    config: {
+      negocio: c.negocio ?? "Mi Taller 3D",
+      bienvenida: c.bienvenida ?? "",
+      whatsapp: c.whatsapp ?? "",
+      moneda: c.moneda ?? "S/"
+    },
+    productos: ((d && d.productos) || []).map(p => ({
+      id: p.id || uid(),
+      nombre: p.nombre || "",
+      precio: p.precio === "" || p.precio == null ? "" : Number(p.precio),
+      imagen: p.imagen || ""
+    }))
+  };
+}
+
+/* ---------- mensajes ---------- */
+function mostrar(texto, tipo){
+  const m = $("#msg");
+  m.className = "mensaje " + tipo;
+  m.textContent = texto;
+  m.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+/* ---------- WhatsApp ---------- */
+function limpiarNumero(v){
+  let n = String(v || "").replace(/\D/g, "");
+  if(/^9\d{8}$/.test(n)) n = "51" + n;      // número peruano sin código de país
+  return n;
+}
+function pintarWaHint(){
+  const n = limpiarNumero($("#cWhatsapp").value);
+  $("#waHint").innerHTML = n
+    ? `Los pedidos llegarán a: <b>+${esc(n)}</b>`
+    : "Ejemplo: 51987654321 (51 es el código de Perú)";
+}
+
+/* ---------- fotos ---------- */
+function comprimir(file, max = 800, calidad = 0.78){
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const s = Math.min(1, max / Math.max(img.width, img.height));
+      const w = Math.round(img.width * s), h = Math.round(img.height * s);
+      const c = document.createElement("canvas");
+      c.width = w; c.height = h;
+      const x = c.getContext("2d");
+      x.fillStyle = "#fff"; x.fillRect(0, 0, w, h);
+      x.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      res(c.toDataURL("image/jpeg", calidad));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("No se pudo leer la foto " + file.name)); };
+    img.src = url;
+  });
+}
+function nombreDesdeArchivo(f){
+  const n = f.name.replace(/\.[^.]+$/, "").replace(/[-_]+/g, " ").trim();
+  if(/^(img|image|imagen|photo|foto|dsc|pxl|whatsapp)\b/i.test(n) || /^\d+$/.test(n)) return "";
+  return n.charAt(0).toUpperCase() + n.slice(1);
+}
+
+/* ---------- lista de productos ---------- */
+let nuevosIds = new Set();
+function render(){
+  const lista = $("#lista");
+  if(state.productos.length === 0){
+    lista.innerHTML = `<p class="sub" style="grid-column:1/-1;margin:8px 0">Aún no hay productos. Presiona «Nuevo producto» o «Subir varias fotos».</p>`;
+    pintarEstado();
+    return;
+  }
+  lista.innerHTML = state.productos.map(p => `
+    <div class="slot ${nuevosIds.has(p.id) ? "nuevo" : ""}" data-id="${esc(p.id)}">
+      <label class="foto-slot">
+        ${p.imagen
+          ? `<img src="${esc(p.imagen)}" alt=""><span class="cambiar">Cambiar foto</span>`
+          : `<span class="vacio-foto"><b>＋</b>Agregar foto</span>`}
+        <input type="file" accept="image/*" hidden data-role="foto">
+      </label>
+      <input class="in-nombre" type="text" placeholder="Nombre" value="${esc(p.nombre)}" data-role="nombre">
+      <div class="precio-wrap"><span>${esc(state.config.moneda || "S/")}</span>
+        <input type="number" inputmode="decimal" min="0" step="0.5" placeholder="Precio" value="${p.precio === "" ? "" : esc(p.precio)}" data-role="precio">
+      </div>
+      <button class="btn btn-peligro" type="button" data-role="borrar">Eliminar</button>
+    </div>`).join("");
+  pintarEstado();
+}
+
+$("#lista").addEventListener("input", e => {
+  const slot = e.target.closest(".slot"); if(!slot) return;
+  const p = state.productos.find(x => x.id === slot.dataset.id); if(!p) return;
+  if(e.target.dataset.role === "nombre") p.nombre = e.target.value;
+  if(e.target.dataset.role === "precio") p.precio = e.target.value === "" ? "" : Number(e.target.value);
+  slot.classList.remove("error");
+  cambio();
+});
+$("#lista").addEventListener("change", async e => {
+  if(e.target.dataset.role !== "foto") return;
+  const slot = e.target.closest(".slot");
+  const p = state.productos.find(x => x.id === slot.dataset.id);
+  const file = e.target.files[0]; if(!p || !file) return;
+  try{
+    p.imagen = await comprimir(file);
+    cambio(); render();
+  }catch(err){ mostrar(err.message + ". Prueba con una foto JPG o PNG.", "error"); }
+});
+$("#lista").addEventListener("click", e => {
+  if(e.target.dataset.role !== "borrar") return;
+  const slot = e.target.closest(".slot");
+  const p = state.productos.find(x => x.id === slot.dataset.id);
+  if(!p) return;
+  if(p.nombre || p.imagen){
+    if(!confirm(`¿Eliminar «${p.nombre || "este producto"}»?`)) return;
+  }
+  state.productos = state.productos.filter(x => x.id !== p.id);
+  cambio(); render();
+});
+
+$("#btnNuevo").addEventListener("click", () => {
+  const p = { id: uid(), nombre: "", precio: "", imagen: "" };
+  nuevosIds = new Set([p.id]);
+  state.productos.unshift(p);
+  cambio(); render();
+  document.querySelector(".slot .in-nombre")?.focus();
+});
+
+$("#fotosVarias").addEventListener("change", async e => {
+  const files = [...e.target.files];
+  e.target.value = "";
+  if(!files.length) return;
+  const creados = [];
+  const fallos = [];
+  for(const f of files){
+    try{
+      const imagen = await comprimir(f);
+      creados.push({ id: uid(), nombre: nombreDesdeArchivo(f), precio: "", imagen });
+    }catch(err){ fallos.push(f.name); }
+  }
+  if(creados.length){
+    nuevosIds = new Set(creados.map(p => p.id));
+    state.productos.unshift(...creados);
+    cambio(); render();
+    document.querySelector(".slot")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    mostrar(`Se crearon ${creados.length} producto${creados.length === 1 ? "" : "s"}. Escribe el nombre y el precio de cada uno.`, "info");
+  }
+  if(fallos.length) mostrar("No se pudieron leer: " + fallos.join(", ") + ". Prueba con fotos JPG o PNG.", "error");
+});
+
+/* ---------- configuración del negocio ---------- */
+function enlazarConfig(){
+  $("#cNegocio").value = state.config.negocio;
+  $("#cWhatsapp").value = state.config.whatsapp;
+  $("#cMoneda").value = state.config.moneda;
+  $("#cBienvenida").value = state.config.bienvenida;
+  pintarWaHint();
+}
+$("#cNegocio").addEventListener("input", e => { state.config.negocio = e.target.value; cambio(); });
+$("#cBienvenida").addEventListener("input", e => { state.config.bienvenida = e.target.value; cambio(); });
+$("#cMoneda").addEventListener("input", e => {
+  state.config.moneda = e.target.value;
+  document.querySelectorAll(".precio-wrap span").forEach(s => s.textContent = e.target.value || "S/");
+  cambio();
+});
+$("#cWhatsapp").addEventListener("input", () => { pintarWaHint(); state.config.whatsapp = $("#cWhatsapp").value; cambio(); });
+$("#cWhatsapp").addEventListener("blur", () => {
+  const n = limpiarNumero($("#cWhatsapp").value);
+  $("#cWhatsapp").value = n; state.config.whatsapp = n; pintarWaHint(); cambio();
+});
+
+/* ---------- salida y validación ---------- */
+function validar(){
+  const wa = limpiarNumero(state.config.whatsapp);
+  if(wa.length < 8 || wa.length > 15) return "Escribe tu número de WhatsApp con código de país (ejemplo: 51987654321).";
+  const usados = state.productos.filter(p => p.nombre.trim() || p.precio !== "" || p.imagen);
+  if(usados.length === 0) return "Agrega al menos un producto antes de publicar.";
+  let primero = null;
+  for(const p of usados){
+    const slot = document.querySelector(`.slot[data-id="${p.id}"]`);
+    const mal = !p.nombre.trim() || p.precio === "" || isNaN(p.precio) || p.precio < 0;
+    slot?.classList.toggle("error", mal);
+    if(mal && !primero) primero = slot;
+  }
+  if(primero){
+    primero.scrollIntoView({ behavior: "smooth", block: "center" });
+    return "Hay productos sin nombre o sin precio (marcados en rojo). Complétalos o elimínalos.";
+  }
+  return null;
+}
+function salida(){
+  return {
+    config: {
+      negocio: state.config.negocio.trim() || "Catálogo",
+      bienvenida: state.config.bienvenida.trim(),
+      whatsapp: limpiarNumero(state.config.whatsapp),
+      moneda: state.config.moneda.trim() || "S/"
+    },
+    productos: state.productos
+      .filter(p => p.nombre.trim() || p.precio !== "" || p.imagen)
+      .map(p => ({ id: p.id, nombre: p.nombre.trim(), precio: Number(p.precio), imagen: p.imagen }))
+  };
+}
+
+/* ---------- GitHub ---------- */
+function leerGH(){
+  return {
+    owner: $("#ghOwner").value.trim(),
+    repo: $("#ghRepo").value.trim(),
+    branch: $("#ghBranch").value.trim() || "main",
+    token: $("#ghToken").value.trim()
+  };
+}
+function cargarGH(){
+  let g = {};
+  try{ g = JSON.parse(localStorage.getItem(LS_GH) || "{}"); }catch(e){}
+  if(!g.owner && /\.github\.io$/.test(location.hostname)){
+    g.owner = location.hostname.split(".")[0];
+    g.repo = location.pathname.split("/")[1] || "";
+  }
+  $("#ghOwner").value = g.owner || "";
+  $("#ghRepo").value = g.repo || "";
+  $("#ghBranch").value = g.branch || "main";
+  $("#ghToken").value = g.token || "";
+  if(!g.token) $("#gh").open = true;
+}
+function guardarGH(){
+  try{
+    if($("#ghRecordar").checked) localStorage.setItem(LS_GH, JSON.stringify(leerGH()));
+    else localStorage.removeItem(LS_GH);
+  }catch(e){}
+}
+function b64(str){
+  const bytes = new TextEncoder().encode(str);
+  let bin = "";
+  for(let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+function errorHttp(status){
+  if(status === 401) return "GitHub no aceptó el token. Revisa que esté bien copiado y que no haya vencido.";
+  if(status === 403) return "El token no tiene permiso para escribir. Debe tener «Contents: Read and write» sobre este repositorio.";
+  if(status === 404) return "No se encontró el repositorio. Revisa usuario y nombre del repositorio, y que el token tenga acceso a él.";
+  if(status === 409 || status === 422) return "GitHub detectó un conflicto. Presiona Publicar otra vez.";
+  return "GitHub respondió con un error (" + status + "). Intenta de nuevo en un momento.";
+}
+
+async function publicar(){
+  const err = validar();
+  if(err){ mostrar(err, "error"); return; }
+  const gh = leerGH();
+  if(!gh.owner || !gh.repo || !gh.token){
+    $("#gh").open = true;
+    mostrar("Completa tu usuario, el repositorio y el token de GitHub. Los pasos para crear el token están en el README.", "error");
+    $("#gh").scrollIntoView({ behavior: "smooth", block: "center" });
+    return;
+  }
+  guardarGH();
+
+  const botones = [$("#btnPublicar"), $("#btnPublicar2")];
+  botones.forEach(b => { b.disabled = true; b.textContent = "Publicando…"; });
+  try{
+    const contenido = JSON.stringify(salida());
+    const base = `https://api.github.com/repos/${encodeURIComponent(gh.owner)}/${encodeURIComponent(gh.repo)}/contents`;
+    const headers = { "Authorization": "Bearer " + gh.token, "Accept": "application/vnd.github+json" };
+
+    // buscar el archivo actual para obtener su "sha" (necesario para reemplazarlo)
+    let sha;
+    const g = await fetch(`${base}?ref=${encodeURIComponent(gh.branch)}`, { headers });
+    if(g.ok){
+      const lista = await g.json();
+      const f = Array.isArray(lista) ? lista.find(x => x.name === "catalogo.json") : null;
+      if(f) sha = f.sha;
+    } else if(g.status !== 404){
+      throw new Error(errorHttp(g.status));
+    }
+
+    const body = { message: "Actualizar catálogo desde el panel", content: b64(contenido), branch: gh.branch };
+    if(sha) body.sha = sha;
+    const p = await fetch(`${base}/catalogo.json`, {
+      method: "PUT",
+      headers: { ...headers, "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    if(!p.ok) throw new Error(errorHttp(p.status));
+
+    sucio = false; guardarBorrador(); pintarEstado();
+    mostrar("¡Publicado! GitHub tarda entre 1 y 2 minutos en actualizar la página; luego tus clientes verán el catálogo nuevo.", "ok");
+  }catch(e){
+    const sinRed = e instanceof TypeError;
+    mostrar(sinRed ? "No hay conexión con GitHub. Revisa tu internet e intenta de nuevo." : e.message, "error");
+  }finally{
+    $("#btnPublicar").textContent = "Publicar cambios";
+    $("#btnPublicar2").textContent = "Publicar";
+    botones.forEach(b => b.disabled = false);
+  }
+}
+$("#btnPublicar").addEventListener("click", publicar);
+$("#btnPublicar2").addEventListener("click", publicar);
+
+$("#btnDescargar").addEventListener("click", () => {
+  const err = validar();
+  if(err){ mostrar(err, "error"); return; }
+  const blob = new Blob([JSON.stringify(salida())], { type: "application/json" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "catalogo.json";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  mostrar("Descargado. Para publicarlo a mano, sube este archivo a tu repositorio de GitHub reemplazando el catalogo.json que ya está.", "info");
+});
+
+async function cargarPublicado(silencioso){
+  try{
+    const r = await fetch("catalogo.json?v=" + Date.now(), { cache: "no-store" });
+    if(!r.ok) throw new Error();
+    state = normalizar(await r.json());
+    sucio = false; guardarBorrador();
+    enlazarConfig(); render();
+    if(!silencioso) mostrar("Se cargó el catálogo publicado.", "ok");
+    return true;
+  }catch(e){
+    if(!silencioso) mostrar("No se pudo leer el catálogo publicado. Si abriste este archivo desde tu computadora, funciona solo cuando está en GitHub Pages.", "error");
+    return false;
+  }
+}
+$("#btnRecargar").addEventListener("click", () => {
+  if(sucio && !confirm("Se perderán los cambios que no has publicado. ¿Continuar?")) return;
+  cargarPublicado(false);
+});
+
+/* ---------- inicio ---------- */
+(async function(){
+  cargarGH();
+  const b = leerBorrador();
+  if(b && b.state){
+    state = normalizar(b.state);
+    sucio = !!b.sucio;
+    enlazarConfig(); render();
+  } else {
+    enlazarConfig();
+    await cargarPublicado(true);
+    render();
+  }
+  pintarEstado();
+})();
+</script>
+</body>
+</html>

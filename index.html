@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0B1220">
+<title>Catálogo 3D</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="hero">
+  <span class="eyebrow">Impresión 3D bajo pedido</span>
+  <h1 id="titulo">Catálogo</h1>
+  <p id="bienvenida"></p>
+</header>
+
+<div class="buscador-barra">
+  <div class="buscador">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+    <input id="q" type="text" inputmode="search" autocomplete="off" placeholder="Buscar producto…" aria-label="Buscar producto">
+    <button class="limpiar" id="limpiar" hidden aria-label="Borrar búsqueda">✕</button>
+  </div>
+</div>
+
+<main class="wrap">
+  <p class="conteo" id="conteo" aria-live="polite"></p>
+  <div class="grid" id="grid"></div>
+</main>
+
+<footer>hecho a capas · una pieza a la vez</footer>
+
+<button class="fab" id="fab" aria-label="Ver mi pedido">
+  🧾 <span id="fabTotal">Mi pedido</span> <span class="contador" id="contador">0</span>
+</button>
+
+<div class="overlay" id="overlay"></div>
+<aside class="ticket" id="ticket" aria-label="Mi pedido">
+  <div class="ticket-head">
+    <h2>Mi pedido</h2>
+    <button id="cerrar" aria-label="Cerrar">✕</button>
+  </div>
+  <div class="ticket-items" id="ticketItems"></div>
+  <div class="ticket-foot">
+    <div class="ticket-total"><span>Total</span><b id="ticketTotal"></b></div>
+    <button class="btn-enviar" id="btnEnviar">Enviar pedido por WhatsApp</button>
+    <div class="nota" id="nota"></div>
+  </div>
+</aside>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const norm = s => String(s).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const clamp = n => Math.max(1, Math.min(99, parseInt(n, 10) || 1));
+const redondear = n => Math.round(n * 100) / 100;
+const fmt = n => Number.isInteger(n) ? String(n) : n.toFixed(2);
+
+let DATA = { config: {}, productos: [] };
+const cantidades = {};   // cantidad elegida en cada tarjeta (antes de agregar)
+const carrito = {};      // id -> cantidad en el pedido
+
+const money = n => `${DATA.config.moneda || "S/"} ${fmt(redondear(n))}`;
+
+/* ---------- carga del catálogo ---------- */
+async function cargar(){
+  try{
+    const r = await fetch("catalogo.json?v=" + Date.now(), { cache: "no-store" });
+    if(!r.ok) throw new Error(r.status);
+    const d = await r.json();
+    DATA = {
+      config: d.config || {},
+      productos: (d.productos || []).map(p => ({ ...p, precio: Number(p.precio) || 0 }))
+    };
+  }catch(e){
+    $("#grid").innerHTML = `<div class="vacio">No se pudo cargar el catálogo.<br>Revisa tu conexión e intenta de nuevo.</div>`;
+    return;
+  }
+  const c = DATA.config;
+  $("#titulo").textContent = c.negocio || "Catálogo";
+  document.title = c.negocio || "Catálogo 3D";
+  $("#bienvenida").textContent = c.bienvenida || "Busca tus piezas favoritas, arma tu pedido y envíalo por WhatsApp.";
+  renderGrid();
+  actualizarFab();
+}
+
+/* ---------- lista de productos + búsqueda ---------- */
+function renderGrid(){
+  const grid = $("#grid");
+  const total = DATA.productos.length;
+  const texto = $("#q").value.trim();
+  $("#limpiar").hidden = !texto;
+
+  if(total === 0){
+    $("#conteo").textContent = "";
+    grid.innerHTML = `<div class="vacio">El catálogo se está preparando.<br>Vuelve en un rato.</div>`;
+    return;
+  }
+
+  const palabras = norm(texto).split(/\s+/).filter(Boolean);
+  const lista = DATA.productos.filter(p => {
+    const n = norm(p.nombre);
+    return palabras.every(w => n.includes(w));
+  });
+
+  $("#conteo").textContent = texto
+    ? `${lista.length} de ${total} productos`
+    : `${total} producto${total === 1 ? "" : "s"}`;
+
+  if(lista.length === 0){
+    grid.innerHTML = `<div class="vacio">No encontramos «${esc(texto)}».<br>Prueba con otra palabra.</div>`;
+    return;
+  }
+
+  grid.innerHTML = lista.map(p => {
+    const id = esc(p.id);
+    const cant = cantidades[p.id] || 1;
+    const foto = p.imagen
+      ? `<img src="${esc(p.imagen)}" alt="${esc(p.nombre)}" loading="lazy">`
+      : `<div class="sin-foto">Sin foto</div>`;
+    return `
+      <article class="card">
+        <div class="foto">${foto}</div>
+        <div class="info">
+          <h3>${esc(p.nombre)}</h3>
+          <div class="precio">${esc(money(p.precio))}</div>
+          <div class="acciones">
+            <div class="stepper" data-id="${id}">
+              <button type="button" data-act="menos" aria-label="Menos">−</button>
+              <input type="number" inputmode="numeric" min="1" max="99" value="${cant}" aria-label="Cantidad de ${esc(p.nombre)}">
+              <button type="button" data-act="mas" aria-label="Más">+</button>
+            </div>
+            <button type="button" class="btn-add" data-act="add" data-id="${id}">Agregar</button>
+          </div>
+        </div>
+      </article>`;
+  }).join("");
+}
+
+$("#q").addEventListener("input", renderGrid);
+$("#limpiar").addEventListener("click", () => { $("#q").value = ""; renderGrid(); $("#q").focus(); });
+
+// si una foto no carga, mostrar aviso en vez del ícono roto
+$("#grid").addEventListener("error", e => {
+  if(e.target.tagName === "IMG"){
+    const d = document.createElement("div");
+    d.className = "sin-foto"; d.textContent = "Sin foto";
+    e.target.replaceWith(d);
+  }
+}, true);
+
+$("#grid").addEventListener("click", e => {
+  const el = e.target.closest("[data-act]");
+  if(!el) return;
+  const id = el.closest("[data-id]").dataset.id;
+  const act = el.dataset.act;
+
+  if(act === "mas" || act === "menos"){
+    cantidades[id] = clamp((cantidades[id] || 1) + (act === "mas" ? 1 : -1));
+    el.parentElement.querySelector("input").value = cantidades[id];
+  }
+  if(act === "add"){
+    agregar(id, cantidades[id] || 1);
+    cantidades[id] = 1;
+    el.closest(".info").querySelector(".stepper input").value = 1;
+    el.textContent = "Agregado ✓";
+    el.classList.add("listo");
+    setTimeout(() => { el.textContent = "Agregar"; el.classList.remove("listo"); }, 900);
+  }
+});
+$("#grid").addEventListener("input", e => {
+  if(e.target.matches(".stepper input")){
+    const id = e.target.closest("[data-id]").dataset.id;
+    cantidades[id] = clamp(e.target.value);
+  }
+});
+$("#grid").addEventListener("change", e => {
+  if(e.target.matches(".stepper input")){
+    const id = e.target.closest("[data-id]").dataset.id;
+    e.target.value = cantidades[id] = clamp(e.target.value);
+  }
+});
+
+/* ---------- pedido ---------- */
+function agregar(id, cant){
+  carrito[id] = clamp((carrito[id] || 0) + cant);
+  actualizarFab();
+}
+function itemsPedido(){
+  return DATA.productos
+    .filter(p => carrito[p.id])
+    .map(p => ({ ...p, qty: carrito[p.id] }));
+}
+function totalPedido(){
+  return redondear(itemsPedido().reduce((s, i) => s + i.precio * i.qty, 0));
+}
+function actualizarFab(){
+  const items = itemsPedido();
+  const unidades = items.reduce((s, i) => s + i.qty, 0);
+  $("#contador").textContent = unidades;
+  $("#fabTotal").textContent = unidades ? money(totalPedido()) : "Mi pedido";
+}
+
+function renderTicket(){
+  const items = itemsPedido();
+  const cont = $("#ticketItems");
+  if(items.length === 0){
+    cont.innerHTML = `<div class="vacio">Todavía no agregaste nada.<br>Busca piezas en el catálogo y presiona «Agregar».</div>`;
+  } else {
+    cont.innerHTML = items.map(i => `
+      <div class="t-item" data-id="${esc(i.id)}">
+        <div class="t-fila">
+          <div>
+            <div class="t-nom">${esc(i.nombre)}</div>
+            <div class="t-unit">${esc(money(i.precio))} c/u</div>
+          </div>
+          <div class="t-sub">${esc(money(i.precio * i.qty))}</div>
+        </div>
+        <div class="t-ctrl">
+          <div class="stepper">
+            <button type="button" data-act="menos" aria-label="Menos">−</button>
+            <input type="number" inputmode="numeric" min="1" max="99" value="${i.qty}" aria-label="Cantidad de ${esc(i.nombre)}">
+            <button type="button" data-act="mas" aria-label="Más">+</button>
+          </div>
+          <button type="button" class="quitar" data-act="quitar">Quitar</button>
+        </div>
+      </div>`).join("");
+  }
+  $("#ticketTotal").textContent = money(totalPedido());
+
+  const numero = String(DATA.config.whatsapp || "").replace(/\D/g, "");
+  $("#btnEnviar").disabled = items.length === 0 || !numero;
+  $("#nota").textContent = numero ? "" : "El vendedor aún no configuró su WhatsApp. Intenta más tarde.";
+}
+
+$("#ticketItems").addEventListener("click", e => {
+  const el = e.target.closest("[data-act]");
+  if(!el) return;
+  const id = el.closest("[data-id]").dataset.id;
+  if(el.dataset.act === "quitar") delete carrito[id];
+  if(el.dataset.act === "mas") carrito[id] = clamp(carrito[id] + 1);
+  if(el.dataset.act === "menos"){
+    if(carrito[id] <= 1) delete carrito[id]; else carrito[id]--;
+  }
+  actualizarFab(); renderTicket();
+});
+$("#ticketItems").addEventListener("change", e => {
+  if(e.target.matches(".stepper input")){
+    const id = e.target.closest("[data-id]").dataset.id;
+    carrito[id] = clamp(e.target.value);
+    actualizarFab(); renderTicket();
+  }
+});
+
+function abrirTicket(){
+  renderTicket();
+  $("#overlay").classList.add("abierto");
+  $("#ticket").classList.add("abierto");
+}
+function cerrarTicket(){
+  $("#overlay").classList.remove("abierto");
+  $("#ticket").classList.remove("abierto");
+}
+$("#fab").addEventListener("click", abrirTicket);
+$("#cerrar").addEventListener("click", cerrarTicket);
+$("#overlay").addEventListener("click", cerrarTicket);
+document.addEventListener("keydown", e => { if(e.key === "Escape") cerrarTicket(); });
+
+/* ---------- enviar a WhatsApp ---------- */
+function armarMensaje(){
+  const items = itemsPedido();
+  const lineas = items.map(i => `• ${i.qty} x ${i.nombre} — ${money(i.precio * i.qty)}`).join("\n");
+  const negocio = DATA.config.negocio || "tu catálogo";
+  return `Hola, quiero hacer este pedido en ${negocio}:\n\n${lineas}\n\nTotal: ${money(totalPedido())}`;
+}
+$("#btnEnviar").addEventListener("click", () => {
+  const numero = String(DATA.config.whatsapp || "").replace(/\D/g, "");
+  if(!numero || itemsPedido().length === 0) return;
+  const url = `https://wa.me/${numero}?text=${encodeURIComponent(armarMensaje())}`;
+  const w = window.open(url, "_blank");
+  if(!w) location.href = url;
+});
+
+cargar();
+</script>
+</body>
+</html>
